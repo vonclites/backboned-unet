@@ -143,6 +143,10 @@ class Unet(nn.Module):
         if shortcut_features != 'default':
             self.shortcut_features = shortcut_features
 
+        # feature embedding
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(bb_out_chs, classes)
+
         # build decoder part
         self.upsample_blocks = nn.ModuleList()
         decoder_filters = decoder_filters[:len(self.shortcut_features)]  # avoiding having more blocks than skip connections
@@ -155,7 +159,20 @@ class Unet(nn.Module):
                                                       parametric=parametric_upsampling,
                                                       use_bn=decoder_use_batchnorm))
 
-        self.final_conv = nn.Conv2d(decoder_filters[-1], classes, kernel_size=(1, 1))
+        self.final_conv = nn.Sequential(
+            nn.Conv2d(decoder_filters[-1], 3, kernel_size=(1, 1)),
+            nn.Tanh()
+        )
+        # self.final_conv = nn.Sequential(
+        #     nn.ConvTranspose2d(
+        #         in_channels=decoder_filters[-1],
+        #         out_channels=3,
+        #         kernel_size=4,
+        #         stride=2,
+        #         padding=1
+        #     ),
+        #     nn.Tanh()
+        # )
 
         if encoder_freeze:
             self.freeze_encoder()
@@ -174,13 +191,14 @@ class Unet(nn.Module):
         """ Forward propagation in U-Net. """
 
         x, features = self.forward_backbone(*input)
-
+        embedding = self.avgpool(x)
+        embedding = self.fc(torch.flatten(embedding, 1))
         for skip_name, upsample_block in zip(self.shortcut_features[::-1], self.upsample_blocks):
             skip_features = features[skip_name]
             x = upsample_block(x, skip_features)
 
         x = self.final_conv(x)
-        return x
+        return x, embedding
 
     def forward_backbone(self, x):
 
